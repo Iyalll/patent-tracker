@@ -191,6 +191,43 @@ drop policy if exists "owner delete patent files" on storage.objects;
 create policy "owner delete patent files" on storage.objects for delete to authenticated
   using (bucket_id = 'patent-files' and (owner_id = auth.uid()::text or public.is_admin()));
 
+-- ---------- 7. 删除成员（本人或管理员；名下条目可转交给他人或一并删除） ----------
+-- 注意：文件实体由前端先从 Storage 删除，这里只处理数据库记录
+create or replace function public.delete_member(target uuid, transfer_to uuid default null)
+returns void
+language plpgsql security definer set search_path = public, auth
+as $$
+begin
+  if auth.uid() is null then
+    raise exception '未登录';
+  end if;
+  if target <> auth.uid() and not public.is_admin() then
+    raise exception '只能删除自己，或由管理员删除他人';
+  end if;
+  if not exists (select 1 from public.profiles where id = target) then
+    raise exception '成员不存在';
+  end if;
+  if (select role from public.profiles where id = target) = 'admin'
+     and not exists (select 1 from public.profiles where role = 'admin' and id <> target) then
+    raise exception '这是最后一位管理员，请先指定其他管理员';
+  end if;
+
+  if transfer_to is not null then
+    if transfer_to = target or not exists (select 1 from public.profiles where id = transfer_to) then
+      raise exception '转交对象无效';
+    end if;
+    update public.patents set owner_id = transfer_to where owner_id = target;
+  else
+    delete from public.patents where owner_id = target;   -- 进展记录、文件记录随之级联删除
+  end if;
+
+  delete from auth.users where id = target;                -- profiles 随之级联删除
+end;
+$$;
+
+revoke execute on function public.delete_member(uuid, uuid) from public, anon;
+grant execute on function public.delete_member(uuid, uuid) to authenticated;
+
 -- =====================================================================
 --  常用管理语句（按需单独执行）
 -- =====================================================================

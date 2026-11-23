@@ -30,6 +30,7 @@ const patentsOf = (uid) => S.patents.filter((p) => p.owner_id === uid);
 const isAdmin = () => S.me?.role === 'admin';
 const canEdit = (p) => isAdmin() || p.owner_id === S.me?.id;
 const canDel = (authorId) => isAdmin() || authorId === S.me?.id;
+const canDelMember = (m) => isAdmin() || m.id === S.me?.id;
 const boardMembers = () => S.profiles.filter((p) => p.show_on_board || patentsOf(p.id).length);
 const stageOf = (name) => STAGES.find((s) => s.name === name) || { name, color: '#5f6670', bg: '#eff0f2' };
 const avg = (arr) => (arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0);
@@ -162,20 +163,31 @@ function viewHome() {
   const members = boardMembers().map(memberCard).join('') ||
     `<div class="empty">还没有成员。${isAdmin() ? '在 Supabase 中添加账号后会自动出现在这里。' : ''}</div>`;
 
-  const recent = S.events.slice()
+  const recentEvents = S.events.filter((e) => patent(e.patent_id)).slice()
     .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
-    .slice(0, 8)
-    .map((e) => {
-      const p = patent(e.patent_id); if (!p) return '';
-      const k = EVENT_KINDS[e.kind] || EVENT_KINDS.note;
-      return `<a class="feed-item" href="#/patent/${p.id}">
-        <span class="ev-dot ${k.cls}"></span>
-        <div class="feed-body">
-          <div class="feed-top"><b>${esc(k.label)}</b><span class="muted">· ${esc(profile(p.owner_id)?.name || '')}</span><span class="feed-date">${fmtDate(e.happened_on)}</span></div>
-          <div class="feed-title">${esc(p.title)}</div>
-          ${e.content ? `<div class="feed-content">${esc(e.content)}</div>` : ''}
-        </div></a>`;
-    }).join('') || '<div class="empty small">暂无动态</div>';
+    .slice(0, 8);
+  const feedLine = (e) => {
+    const p = patent(e.patent_id);
+    const k = EVENT_KINDS[e.kind] || EVENT_KINDS.note;
+    return `<a class="feed-row" href="#/patent/${p.id}" title="${esc(e.content)}">
+      <span class="ev-dot ${k.cls}"></span>
+      <span class="fr-kind">${esc(k.label)}</span>
+      <span class="fr-who">${esc(profile(p.owner_id)?.name || '')}</span>
+      <span class="fr-title">${esc(p.title)}</span>
+      <span class="fr-content">${esc(e.content)}</span>
+      <span class="fr-date">${fmtShort(e.happened_on)}</span></a>`;
+  };
+  const latest = recentEvents[0];
+  const feedOpen = localStorage.getItem('pt_feed_open') === '1';
+  const feed = `<details class="card feed-box" data-feed ${feedOpen ? 'open' : ''}>
+    <summary>
+      <span class="fb-title">最近动态</span>
+      <span class="count">${recentEvents.length}</span>
+      <span class="fb-latest">${latest ? `<span class="ev-dot ${(EVENT_KINDS[latest.kind] || EVENT_KINDS.note).cls}"></span>${esc(profile(patent(latest.patent_id).owner_id)?.name || '')} · ${esc((EVENT_KINDS[latest.kind] || EVENT_KINDS.note).label)} · ${esc(patent(latest.patent_id).title)}` : '暂无动态'}</span>
+      <span class="fb-toggle">${icon.down}</span>
+    </summary>
+    <div class="feed-list">${recentEvents.map(feedLine).join('') || '<div class="empty small">暂无动态</div>'}</div>
+  </details>`;
 
   return `
     <div class="page-head">
@@ -183,10 +195,9 @@ function viewHome() {
       <button class="btn primary" data-action="new-patent">${icon.plus}新建条目</button>
     </div>
     <div class="stats">${stats}</div>
-    <div class="home-grid">
-      <section><h2 class="sec-title">成员</h2><div class="member-grid">${members}</div></section>
-      <aside><h2 class="sec-title">最近动态</h2><div class="card feed">${recent}</div></aside>
-    </div>`;
+    ${feed}
+    <h2 class="sec-title">成员</h2>
+    <div class="member-grid">${members}</div>`;
 }
 
 function stageBar(list) {
@@ -208,6 +219,7 @@ function memberCard(m) {
       ${avatar(m, 'lg')}
       <div class="mc-who"><div class="mc-name">${esc(m.name)}</div><div class="muted small">${list.length} 篇 · 完成撰写 ${done}</div></div>
       <div class="mc-pct">${avg(list.map((p) => p.progress))}<small>%</small></div>
+      ${canDelMember(m) ? `<button class="icon-btn subtle mc-del" data-action="del-member" data-id="${m.id}" title="删除成员">${icon.trash}</button>` : ''}
     </div>
     ${stageBar(list)}
     <ul class="mc-list">
@@ -231,7 +243,10 @@ function viewMember(m) {
         <h1>${esc(m.name)}</h1>
         <p class="muted">${list.length} 篇 · 平均进度 ${avg(list.map((p) => p.progress))}% · 已交专利中心 ${list.filter((p) => lastEvent(p.id, 'submit')).length}</p>
       </div></div>
-      ${canNew ? `<button class="btn primary" data-action="new-patent" data-owner="${m.id}">${icon.plus}新建条目</button>` : ''}
+      <div class="head-actions">
+        ${canDelMember(m) ? `<button class="btn ghost danger-text" data-action="del-member" data-id="${m.id}">${icon.trash}${m.id === S.me.id ? '注销我的账号' : '删除成员'}</button>` : ''}
+        ${canNew ? `<button class="btn primary" data-action="new-patent" data-owner="${m.id}">${icon.plus}新建条目</button>` : ''}
+      </div>
     </div>
     ${list.length ? `<div class="stage-wrap">${stageBar(list)}</div>` : ''}
     <div class="item-list">${rows}</div>`;
@@ -411,7 +426,8 @@ function viewTeam() {
         <td><input type="checkbox" name="show_on_board" ${p.show_on_board ? 'checked' : ''}></td>
         <td><input type="number" name="sort_order" value="${p.sort_order}" class="w-num"></td>
         <td class="num">${patentsOf(p.id).length}</td>
-        <td><button class="btn sm" data-action="save-profile" data-id="${p.id}">保存</button></td>
+        <td class="nowrap"><button class="btn sm" data-action="save-profile" data-id="${p.id}">保存</button>
+          <button class="icon-btn subtle" data-action="del-member" data-id="${p.id}" title="删除成员">${icon.trash}</button></td>
       </tr>`).join('')}</tbody></table></div>`;
 }
 
@@ -499,6 +515,67 @@ function renameSelfForm() {
   });
 }
 
+function deleteMemberForm(m) {
+  const self = m.id === S.me.id;
+  const list = patentsOf(m.id);
+  const nFiles = list.reduce((n, p) => n + filesOf(p.id).length, 0);
+  const others = S.profiles.filter((x) => x.id !== m.id);
+  if (m.role === 'admin' && !S.profiles.some((x) => x.id !== m.id && x.role === 'admin')) {
+    toast('这是唯一的管理员，请先在「成员」页把其他人设为管理员', 'error');
+    return;
+  }
+  const patentPart = list.length ? `
+      <p class="muted">${esc(m.name)} 名下有 <b>${list.length}</b> 篇条目（${nFiles} 个文件），请选择如何处理：</p>
+      <label class="radio"><input type="radio" name="mode" value="transfer" ${others.length ? 'checked' : 'disabled'}>
+        转交给 <select name="to" ${others.length ? '' : 'disabled'}>${others.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select></label>
+      <label class="radio"><input type="radio" name="mode" value="delete" ${others.length ? '' : 'checked'}>
+        <span>连同条目、进展记录和文件一起删除（无法恢复）</span></label>` : '';
+  openModal({
+    title: self ? '注销我的账号' : `删除成员：${m.name}`,
+    body: `<form class="form">
+      <p class="confirm-text">${self
+        ? '注销后你的登录账号会被删除，无法再登录本站。'
+        : `将删除 ${esc(m.name)} 的登录账号，TA 将无法再登录。`}
+        TA 添加过的进展记录和上传的文件会保留。</p>
+      ${patentPart}
+      <label class="field"><span>请输入「${esc(m.name)}」确认</span><input name="confirm" autocomplete="off"></label>
+      <div class="modal-actions"><button type="button" class="btn ghost" data-close>取消</button>
+        <button class="btn danger" type="submit">${self ? '注销' : '删除'}</button></div></form>`,
+    onMount(md, close) {
+      md.querySelector('form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        if (fd.get('confirm').trim() !== m.name) return toast('输入的名字不一致', 'error');
+        const mode = list.length ? fd.get('mode') : 'none';
+        const to = mode === 'transfer' ? fd.get('to') : null;
+        const btn = e.target.querySelector('[type=submit]');
+        busy(btn, true, '处理中…');
+        try {
+          if (mode === 'delete') {
+            for (const p of list) await api.deletePatent(p.id, filesOf(p.id));
+          }
+          await api.deleteMember(m.id, to);
+          close();
+          if (self) {
+            await api.signOut();
+            S.loaded = false; S.me = null; location.hash = '#/';
+            renderLogin();
+            toast('账号已注销', 'ok');
+            return;
+          }
+          if (location.hash.includes(m.id)) location.hash = '#/';
+          await reload(); render();
+          toast(`已删除成员 ${m.name}`, 'ok');
+        } catch (err) {
+          busy(btn, false);
+          handleErr(err);
+          try { await reload(); render(); } catch { /* ignore */ }
+        }
+      });
+    },
+  });
+}
+
 // ======================= 文件上传 =======================
 async function uploadFiles(pid, fileList) {
   const files = [...fileList];
@@ -555,6 +632,7 @@ const actions = {
       document.body.appendChild(a); a.click(); a.remove();
     } catch (e) { handleErr(e); }
   },
+  'del-member'(el) { deleteMemberForm(profile(el.dataset.id)); },
   async 'save-profile'(el) {
     const tr = el.closest('tr');
     const patch = {
@@ -633,6 +711,11 @@ root.addEventListener('submit', async (e) => {
     }, '已添加记录');
   }
 });
+
+// 记住「最近动态」展开状态（toggle 事件不冒泡，用捕获）
+root.addEventListener('toggle', (e) => {
+  if (e.target.matches?.('[data-feed]')) localStorage.setItem('pt_feed_open', e.target.open ? '1' : '0');
+}, true);
 
 // 拖拽上传
 root.addEventListener('dragover', (e) => {

@@ -162,6 +162,10 @@ export function createSupabaseBackend(cfg) {
       return one(await rest(`profiles?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify(patch) }), '修改成员');
     },
 
+    async deleteMember(id, transferTo = null) {
+      await rest('rpc/delete_member', { method: 'POST', body: JSON.stringify({ target: id, transfer_to: transferTo }) });
+    },
+
     async createPatent(data) {
       return one(await rest('patents', { method: 'POST', body: JSON.stringify(data) }), '新建');
     },

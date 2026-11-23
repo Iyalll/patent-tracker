@@ -117,6 +117,26 @@ export function createDemoBackend() {
       Object.assign(db.profiles.find((p) => p.id === id), patch); persist(); return delay();
     },
 
+    async deleteMember(id, transferTo = null) {
+      if (id !== session.userId && !isAdmin()) deny();
+      const target = db.profiles.find((p) => p.id === id);
+      if (target.role === 'admin' && !db.profiles.some((p) => p.id !== id && p.role === 'admin')) {
+        throw new Error('这是最后一位管理员，请先指定其他管理员');
+      }
+      if (transferTo) db.patents.forEach((p) => { if (p.owner_id === id) p.owner_id = transferTo; });
+      else {
+        const gone = new Set(db.patents.filter((p) => p.owner_id === id).map((p) => p.id));
+        db.patents = db.patents.filter((p) => !gone.has(p.id));
+        db.events = db.events.filter((e) => !gone.has(e.patent_id));
+        db.files = db.files.filter((f) => !gone.has(f.patent_id));
+      }
+      db.events.forEach((e) => { if (e.author_id === id) e.author_id = null; });
+      db.files.forEach((f) => { if (f.uploaded_by === id) f.uploaded_by = null; });
+      db.profiles = db.profiles.filter((p) => p.id !== id);
+      db.accounts = db.accounts.filter((a) => a.userId !== id);
+      persist(); return delay();
+    },
+
     async createPatent(data) {
       if (data.owner_id !== session.userId && !isAdmin()) deny();
       const p = { id: uid(), description: '', due_date: null, progress: 0, stage: '撰写中', kind: '发明专利',
