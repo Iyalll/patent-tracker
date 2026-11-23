@@ -58,6 +58,10 @@ begin
     or new.sort_order is distinct from old.sort_order) then
     raise exception '只有管理员可以修改角色、显示与排序';
   end if;
+  if old.role = 'admin' and new.role <> 'admin'
+     and not exists (select 1 from public.profiles where role = 'admin' and id <> old.id) then
+    raise exception '这是最后一位管理员，不能取消管理员身份';
+  end if;
   return new;
 end;
 $$;
@@ -153,28 +157,50 @@ drop policy if exists patents_delete on public.patents;
 create policy patents_delete on public.patents for delete to authenticated
   using (owner_id = auth.uid() or public.is_admin());
 
--- events：任何成员都能给任何条目添加记录（方便由组长/导师录入反馈）；只能删自己的，管理员都能删
+-- 能否修改某个条目（及其记录、文件）：撰写人本人或管理员
+create or replace function public.can_write_patent(pid uuid)
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select public.is_admin()
+      or exists (select 1 from public.patents where id = pid and owner_id = auth.uid());
+$$;
+
+-- 存储路径形如 <条目id>/<文件名>，据此判断权限
+create or replace function public.can_write_patent_path(objname text)
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select case
+    when split_part(objname, '/', 1) ~ '^[0-9a-fA-F-]{36}$'
+      then public.can_write_patent(split_part(objname, '/', 1)::uuid)
+    else public.is_admin()
+  end;
+$$;
+
+-- events：所有人可看；只有该条目的撰写人或管理员可以添加 / 修改 / 删除
 drop policy if exists events_select on public.events;
 create policy events_select on public.events for select to authenticated using (true);
 drop policy if exists events_insert on public.events;
 create policy events_insert on public.events for insert to authenticated
-  with check (author_id = auth.uid());
+  with check (author_id = auth.uid() and public.can_write_patent(patent_id));
 drop policy if exists events_update on public.events;
 create policy events_update on public.events for update to authenticated
-  using (author_id = auth.uid() or public.is_admin());
+  using (public.can_write_patent(patent_id))
+  with check (public.can_write_patent(patent_id));
 drop policy if exists events_delete on public.events;
 create policy events_delete on public.events for delete to authenticated
-  using (author_id = auth.uid() or public.is_admin());
+  using (public.can_write_patent(patent_id));
 
--- files：同上
+-- files：所有人可看、可下载；只有该条目的撰写人或管理员可以上传 / 删除
 drop policy if exists files_select on public.files;
 create policy files_select on public.files for select to authenticated using (true);
 drop policy if exists files_insert on public.files;
 create policy files_insert on public.files for insert to authenticated
-  with check (uploaded_by = auth.uid());
+  with check (uploaded_by = auth.uid() and public.can_write_patent(patent_id));
 drop policy if exists files_delete on public.files;
 create policy files_delete on public.files for delete to authenticated
-  using (uploaded_by = auth.uid() or public.is_admin());
+  using (public.can_write_patent(patent_id));
 
 -- ---------- 6. 文件存储桶（私有，只能通过登录后生成的临时链接下载） ----------
 insert into storage.buckets (id, name, public, file_size_limit)
@@ -185,11 +211,13 @@ drop policy if exists "team read patent files" on storage.objects;
 create policy "team read patent files" on storage.objects for select to authenticated
   using (bucket_id = 'patent-files');
 drop policy if exists "team upload patent files" on storage.objects;
-create policy "team upload patent files" on storage.objects for insert to authenticated
-  with check (bucket_id = 'patent-files');
+drop policy if exists "writer upload patent files" on storage.objects;
+create policy "writer upload patent files" on storage.objects for insert to authenticated
+  with check (bucket_id = 'patent-files' and public.can_write_patent_path(name));
 drop policy if exists "owner delete patent files" on storage.objects;
-create policy "owner delete patent files" on storage.objects for delete to authenticated
-  using (bucket_id = 'patent-files' and (owner_id = auth.uid()::text or public.is_admin()));
+drop policy if exists "writer delete patent files" on storage.objects;
+create policy "writer delete patent files" on storage.objects for delete to authenticated
+  using (bucket_id = 'patent-files' and public.can_write_patent_path(name));
 
 -- ---------- 7. 删除成员（本人或管理员；名下条目可转交给他人或一并删除） ----------
 -- 注意：文件实体由前端先从 Storage 删除，这里只处理数据库记录

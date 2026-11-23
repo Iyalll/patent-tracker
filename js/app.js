@@ -29,7 +29,6 @@ const firstEvent = (pid, kind) => { const l = eventsOf(pid).filter((e) => e.kind
 const patentsOf = (uid) => S.patents.filter((p) => p.owner_id === uid);
 const isAdmin = () => S.me?.role === 'admin';
 const canEdit = (p) => isAdmin() || p.owner_id === S.me?.id;
-const canDel = (authorId) => isAdmin() || authorId === S.me?.id;
 const canDelMember = (m) => isAdmin() || m.id === S.me?.id;
 const boardMembers = () => S.profiles.filter((p) => p.show_on_board);
 const stageOf = (name) => STAGES.find((s) => s.name === name) || { name, color: '#5f6670', bg: '#eff0f2' };
@@ -288,7 +287,7 @@ function viewPatent(p) {
       <span class="ev-dot ${k.cls}"></span>
       <div class="tl-body">
         <div class="tl-top"><b>${k.label}</b><span class="muted">${fmtDate(e.happened_on)} · ${esc(profile(e.author_id)?.name || '')}</span>
-          ${canDel(e.author_id) ? `<button class="icon-btn subtle" data-action="del-event" data-id="${e.id}" title="删除">${icon.trash}</button>` : ''}</div>
+          ${editable ? `<button class="icon-btn subtle" data-action="del-event" data-id="${e.id}" title="删除">${icon.trash}</button>` : ''}</div>
         ${e.content ? `<div class="tl-content">${esc(e.content)}</div>` : ''}
       </div></li>`;
   }).join('');
@@ -300,7 +299,7 @@ function viewPatent(p) {
         <div class="muted small">${fmtSize(f.size)} · ${esc(profile(f.uploaded_by)?.name || '')} · ${relTime(f.created_at)}${f.note ? ` · ${esc(f.note)}` : ''}</div>
       </div>
       <button class="icon-btn" data-action="dl-file" data-id="${f.id}" title="下载">${icon.download}</button>
-      ${canDel(f.uploaded_by) ? `<button class="icon-btn subtle" data-action="del-file" data-id="${f.id}" title="删除">${icon.trash}</button>` : ''}
+      ${editable ? `<button class="icon-btn subtle" data-action="del-file" data-id="${f.id}" title="删除">${icon.trash}</button>` : ''}
     </li>`).join('');
 
   const kindOpts = Object.entries(EVENT_KINDS).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
@@ -335,33 +334,34 @@ function viewPatent(p) {
       <div class="ov-cell"><div class="ov-k">最近反馈</div><div class="ov-v">${fb ? fmtDate(fb.happened_on) : '—'}</div></div>
       <div class="ov-cell"><div class="ov-k">截止日期</div><div class="ov-v">${p.due_date ? fmtDate(p.due_date) : '—'}</div></div>
     </div>
+    ${editable ? '' : `<div class="readonly-note">只读 · 这是 ${esc(owner?.name || '')} 的条目，仅撰写人和管理员可以修改；文件可以下载</div>`}
     ${p.description ? `<div class="card desc"><div class="ov-k">说明</div><div class="desc-text">${esc(p.description)}</div></div>` : ''}
 
     <div class="detail-grid">
       <section class="card">
         <h2 class="sec-title in-card">进展记录 <span class="count">${evs.length}</span></h2>
-        <form class="event-form" data-form="add-event" data-id="${p.id}">
+        ${editable ? `<form class="event-form" data-form="add-event" data-id="${p.id}">
           <div class="ef-row">
             <select name="kind" data-change="event-kind">${kindOpts}</select>
             <input type="date" name="happened_on" value="${today()}" required>
           </div>
           <textarea name="content" rows="2" placeholder="内容：提交了哪些材料 / 专利中心的反馈意见 / 导师批注…"></textarea>
           <div class="ef-row">
-            ${editable ? `<label class="inline muted small">同时把阶段改为
-              <select name="stage_sync"><option value="">不变</option>${STAGES.map((s) => `<option ${s.name === EVENT_KINDS.submit.stage ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></label>` : '<span></span>'}
+            <label class="inline muted small">同时把阶段改为
+              <select name="stage_sync"><option value="">不变</option>${STAGES.map((s) => `<option ${s.name === EVENT_KINDS.submit.stage ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></label>
             <button class="btn primary sm" type="submit">${icon.send}添加记录</button>
           </div>
-        </form>
+        </form>` : ''}
         <ul class="timeline">${timeline || '<li class="empty small">还没有记录</li>'}</ul>
       </section>
 
       <section class="card">
         <h2 class="sec-title in-card">文件 <span class="count">${fs.length}</span></h2>
-        <label class="dropzone" data-drop="${p.id}">
+        ${editable ? `<label class="dropzone" data-drop="${p.id}">
           <input type="file" multiple data-change="upload" data-id="${p.id}" hidden>
           ${icon.upload}<span>点击或拖拽文件到这里上传</span><span class="muted small">单个文件 ≤ ${cfg.MAX_FILE_MB} MB</span>
         </label>
-        <input class="file-note" placeholder="文件备注（可选，例如：说明书 v3 / 按反馈修改版）" data-file-note>
+        <input class="file-note" placeholder="文件备注（可选，例如：说明书 v3 / 按反馈修改版）" data-file-note>` : ''}
         <ul class="file-list">${files || '<li class="empty small">还没有文件</li>'}</ul>
       </section>
     </div>`;
@@ -669,6 +669,9 @@ async function saveProfileField(t) {
     if (name === old.name) return;
     patch = { name };
   } else if (t.name === 'role') {
+    if (old.role === 'admin' && t.value !== 'admin' && !S.profiles.some((x) => x.id !== id && x.role === 'admin')) {
+      t.value = 'admin'; return toast('这是最后一位管理员，不能取消管理员身份', 'error');
+    }
     if (id === S.me.id && t.value !== 'admin' && !await confirmDialog('确定取消自己的管理员身份？取消后将无法再进入本页面。', '确定')) {
       t.value = old.role; return;
     }

@@ -79,6 +79,7 @@ export function createDemoBackend() {
   const me = () => db.profiles.find((p) => p.id === session?.userId);
   const isAdmin = () => me()?.role === 'admin';
   const deny = () => { throw new Error('没有权限执行该操作'); };
+  const canWrite = (pid) => isAdmin() || db.patents.find((p) => p.id === pid)?.owner_id === session.userId;
 
   return {
     mode: 'demo',
@@ -113,6 +114,10 @@ export function createDemoBackend() {
 
     async updateProfile(id, patch) {
       if (id !== session.userId && !isAdmin()) deny();
+      const cur = db.profiles.find((p) => p.id === id);
+      if (cur.role === 'admin' && patch.role && patch.role !== 'admin' && !db.profiles.some((p) => p.id !== id && p.role === 'admin')) {
+        throw new Error('这是最后一位管理员，不能取消管理员身份');
+      }
       if (!isAdmin() && ('role' in patch || 'show_on_board' in patch || 'sort_order' in patch)) deny();
       Object.assign(db.profiles.find((p) => p.id === id), patch); persist(); return delay();
     },
@@ -162,17 +167,19 @@ export function createDemoBackend() {
     },
 
     async addEvent(data) {
+      if (!canWrite(data.patent_id)) deny();
       const e = { id: uid(), ...data, author_id: session.userId, created_at: now() };
       db.events.push(e); persist(); return delay(clone(e));
     },
 
     async deleteEvent(id) {
       const e = db.events.find((x) => x.id === id);
-      if (e.author_id !== session.userId && !isAdmin()) deny();
+      if (!canWrite(e.patent_id)) deny();
       db.events = db.events.filter((x) => x.id !== id); persist(); return delay();
     },
 
     async uploadFile(patentId, file, note = '') {
+      if (!canWrite(patentId)) deny();
       let data = null;
       if (file.size <= 1.5 * 1024 * 1024) {
         data = await new Promise((res, rej) => {
@@ -195,7 +202,7 @@ export function createDemoBackend() {
 
     async deleteFile(f) {
       const x = db.files.find((y) => y.id === f.id);
-      if (x.uploaded_by !== session.userId && !isAdmin()) deny();
+      if (!canWrite(x.patent_id)) deny();
       db.files = db.files.filter((y) => y.id !== f.id); persist(); return delay();
     },
 
