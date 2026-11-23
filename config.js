@@ -9,8 +9,8 @@ window.APP_CONFIG = {
   //   SUPABASE_URL  形如 https://xxxxxxxx.supabase.co
   //   SUPABASE_KEY  anon public key（或 publishable key）。此 key 本身就是公开的，
   //                 数据安全靠数据库里的 RLS 规则保证，可以放心提交到 GitHub。
-  SUPABASE_URL: '',
-  SUPABASE_KEY: '',
+  SUPABASE_URL: 'https://vinbdqxadzhtnrsfnvrt.supabase.co',
+  SUPABASE_KEY: 'sb_publishable_BUpX3Lbdien_Kqy1FgrHGA_teOCbQv6',
 
   // 登录时输入的「用户名」会自动补成 用户名@EMAIL_DOMAIN 去登录。
   // 在 Supabase 里建账号时邮箱就填 zhangsan@team.local 这种形式。
