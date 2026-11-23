@@ -31,7 +31,7 @@ const isAdmin = () => S.me?.role === 'admin';
 const canEdit = (p) => isAdmin() || p.owner_id === S.me?.id;
 const canDel = (authorId) => isAdmin() || authorId === S.me?.id;
 const canDelMember = (m) => isAdmin() || m.id === S.me?.id;
-const boardMembers = () => S.profiles.filter((p) => p.show_on_board || patentsOf(p.id).length);
+const boardMembers = () => S.profiles.filter((p) => p.show_on_board);
 const stageOf = (name) => STAGES.find((s) => s.name === name) || { name, color: '#5f6670', bg: '#eff0f2' };
 const avg = (arr) => (arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0);
 
@@ -414,11 +414,12 @@ function tableRows() {
 function viewTeam() {
   return `
     <div class="page-head"><div><h1>成员管理</h1>
+      <p class="muted">修改后自动保存。取消「首页显示」只是不在总览里显示成员卡片，TA 的条目仍会出现在「全部条目」里。</p>
       <p class="muted">${api.mode === 'demo'
         ? '演示模式下成员是固定的三个示例账号。'
         : '新成员请在 Supabase 控制台 → Authentication → Users → Add user 创建（邮箱填 用户名@' + esc(cfg.EMAIL_DOMAIN) + '，勾选 Auto Confirm），创建后会自动出现在这里。'}</p></div></div>
     <div class="card table-card"><table class="table team-table">
-      <thead><tr><th>成员</th><th>显示名</th><th>角色</th><th>首页显示</th><th>排序</th><th>条目数</th><th></th></tr></thead>
+      <thead><tr><th>成员</th><th>显示名</th><th>角色</th><th>首页显示</th><th>排序（小的在前）</th><th>条目数</th><th></th></tr></thead>
       <tbody>${S.profiles.map((p) => `<tr data-profile="${p.id}">
         <td>${avatar(p, 'sm')}</td>
         <td><input name="name" value="${esc(p.name)}"></td>
@@ -426,8 +427,7 @@ function viewTeam() {
         <td><input type="checkbox" name="show_on_board" ${p.show_on_board ? 'checked' : ''}></td>
         <td><input type="number" name="sort_order" value="${p.sort_order}" class="w-num"></td>
         <td class="num">${patentsOf(p.id).length}</td>
-        <td class="nowrap"><button class="btn sm" data-action="save-profile" data-id="${p.id}">保存</button>
-          <button class="icon-btn subtle" data-action="del-member" data-id="${p.id}" title="删除成员">${icon.trash}</button></td>
+        <td class="nowrap"><button class="icon-btn subtle" data-action="del-member" data-id="${p.id}" title="删除成员">${icon.trash}</button></td>
       </tr>`).join('')}</tbody></table></div>`;
 }
 
@@ -633,18 +633,6 @@ const actions = {
     } catch (e) { handleErr(e); }
   },
   'del-member'(el) { deleteMemberForm(profile(el.dataset.id)); },
-  async 'save-profile'(el) {
-    const tr = el.closest('tr');
-    const patch = {
-      name: tr.querySelector('[name=name]').value.trim(),
-      role: tr.querySelector('[name=role]').value,
-      show_on_board: tr.querySelector('[name=show_on_board]').checked,
-      sort_order: parseInt(tr.querySelector('[name=sort_order]').value, 10) || 0,
-    };
-    if (!patch.name) return toast('显示名不能为空', 'error');
-    if (el.dataset.id === S.me.id && patch.role !== 'admin' && !await confirmDialog('确定取消自己的管理员身份？', '确定')) return;
-    await run(() => api.updateProfile(el.dataset.id, patch), '已保存');
-  },
 };
 
 root.addEventListener('click', (e) => {
@@ -670,8 +658,32 @@ root.addEventListener('input', (e) => {
   }
 });
 
+async function saveProfileField(t) {
+  const tr = t.closest('tr[data-profile]');
+  const id = tr.dataset.profile;
+  const old = profile(id);
+  let patch;
+  if (t.name === 'name') {
+    const name = t.value.trim();
+    if (!name) { t.value = old.name; return toast('显示名不能为空', 'error'); }
+    if (name === old.name) return;
+    patch = { name };
+  } else if (t.name === 'role') {
+    if (id === S.me.id && t.value !== 'admin' && !await confirmDialog('确定取消自己的管理员身份？取消后将无法再进入本页面。', '确定')) {
+      t.value = old.role; return;
+    }
+    patch = { role: t.value };
+  } else if (t.name === 'show_on_board') {
+    patch = { show_on_board: t.checked };
+  } else if (t.name === 'sort_order') {
+    patch = { sort_order: parseInt(t.value, 10) || 0 };
+  } else return;
+  await run(() => api.updateProfile(id, patch), `已保存：${patch.name || old.name}`);
+}
+
 root.addEventListener('change', async (e) => {
   const t = e.target;
+  if (t.closest('tr[data-profile]')) return saveProfileField(t);
   const c = t.dataset.change;
   if (c === 'progress') await run(() => api.updatePatent(t.dataset.id, { progress: +t.value }), '进度已更新');
   else if (c === 'stage') await run(() => api.updatePatent(t.dataset.id, { stage: t.value }), '阶段已更新');
@@ -710,6 +722,10 @@ root.addEventListener('submit', async (e) => {
       if (stage && patent(pid).stage !== stage) await api.updatePatent(pid, { stage });
     }, '已添加记录');
   }
+});
+
+root.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.matches('tr[data-profile] input')) e.target.blur();
 });
 
 // 记住「最近动态」展开状态（toggle 事件不冒泡，用捕获）
