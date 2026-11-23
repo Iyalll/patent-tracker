@@ -486,6 +486,7 @@ function changePwForm() {
   openModal({
     title: '修改密码',
     body: `<form class="form">
+      <p class="muted small" style="margin:0">修改后会退出所有设备上的登录，需要用新密码重新登录。</p>
       <label class="field"><span>新密码</span><input type="password" name="pw" minlength="6" required autocomplete="new-password"></label>
       <label class="field"><span>再输一次</span><input type="password" name="pw2" minlength="6" required autocomplete="new-password"></label>
       <div class="modal-actions"><button type="button" class="btn ghost" data-close>取消</button><button class="btn primary" type="submit">确定</button></div></form>`,
@@ -494,7 +495,17 @@ function changePwForm() {
         e.preventDefault();
         const fd = new FormData(e.target);
         if (fd.get('pw') !== fd.get('pw2')) return toast('两次输入不一致', 'error');
-        try { await api.changePassword(fd.get('pw')); toast('密码已修改', 'ok'); close(); } catch (err) { handleErr(err); }
+        const btn = e.target.querySelector('[type=submit]');
+        busy(btn, true, '修改中…');
+        try {
+          await api.changePassword(fd.get('pw'));
+          close();
+          await api.signOut('global');
+          S.loaded = false; S.me = null;
+          if (location.hash && location.hash !== '#/') location.hash = '#/';
+          renderLogin();
+          toast('密码已修改，请用新密码重新登录', 'ok');
+        } catch (err) { busy(btn, false); handleErr(err); }
       });
     },
   });

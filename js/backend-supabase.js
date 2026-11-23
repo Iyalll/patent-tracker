@@ -139,8 +139,9 @@ export function createSupabaseBackend(cfg) {
       save(toSession(d));
     },
 
-    async signOut() {
-      try { if (session) await auth('/logout', { token: session.access_token }); } catch { /* ignore */ }
+    // scope: 'local' 只退出当前浏览器；'global' 退出该账号在所有设备上的登录
+    async signOut(scope = 'local') {
+      try { if (session) await auth(`/logout?scope=${scope}`, { token: session.access_token }); } catch { /* ignore */ }
       save(null);
     },
 
