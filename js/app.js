@@ -1,6 +1,6 @@
 import { api } from './api.js';
 import {
-  esc, fmtDate, fmtShort, today, relTime, fmtSize, avatar, icon,
+  esc, fmtDate, fmtShort, today, relTime, fmtSize, avatar, avatarColor, icon,
   toast, openModal, confirmDialog, busy,
 } from './ui.js';
 import { buildPreview, previewKind } from './preview.js';
@@ -24,8 +24,8 @@ const PERMS = [
 ];
 const PREVIEW_AUTO_MB = 8;
 
-const S = { me: null, roles: [], profiles: [], roster: [], settings: [], patents: [], events: [], files: [], loaded: false };
-const UI = { expanded: new Set(), moreComments: false, preview: {}, pvForce: new Set(), loginTab: 'login', regInfo: null, adminTab: 'accounts' };
+const S = { me: null, roles: [], profiles: [], roster: [], settings: [], patents: [], events: [], files: [], marks: [], loaded: false };
+const UI = { expanded: new Set(), moreComments: false, preview: {}, pvForce: new Set(), loginTab: 'login', regInfo: null, booted: false };
 const root = document.getElementById('app');
 document.title = cfg.APP_NAME;
 
@@ -53,10 +53,60 @@ const avg = (arr) => (arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / a
 const setting = (key) => S.settings.find((s) => s.key === key)?.value ?? '';
 const parseAliases = (s) => String(s || '').split(/[,，、;；\s]+/).map((x) => x.trim()).filter(Boolean);
 
+const ts = (x) => (x ? Date.parse(x) || 0 : 0);
+const maxTs = (...xs) => Math.max(0, ...xs.map(ts));
+// 「学生型」账号：只撰写自己的条目，登录后直接进自己的页面
+const isWriterOnly = () => can('own') && !can('comment') && !can('manage') && !can('edit_all');
+// 彩色姓名标签
+const who = (p, fallback = '已删除成员') =>
+  `<span class="who" style="--c:${avatarColor(p?.id || '')}" title="${esc(roleOf(p).label || '')}">${esc(p?.name || fallback)}</span>`;
+
 // 别人（老师 / 专利中心 / 管理员）对这篇条目的意见
 const isReviewComment = (e, p = patent(e.patent_id)) => p && COMMENT_KINDS.includes(e.kind) && e.author_id && e.author_id !== p.owner_id;
 // 撰写人还没处理的新意见：意见晚于条目最后一次修改
-const newComments = (p) => eventsOf(p.id).filter((e) => isReviewComment(e, p) && String(e.created_at) > String(p.updated_at));
+const newComments = (p) => eventsOf(p.id).filter((e) => isReviewComment(e, p) && ts(e.created_at) > ts(p.updated_at));
+
+// ---- 审核人通知：撰写人在「我上次处理之后」新增的记录和文件 ----
+// 处理 = 手动忽略，或我在这篇条目里留了意见 / 传了文件
+function noticeBase(p) {
+  const mark = S.marks.find((m) => m.patent_id === p.id)?.seen_at;
+  const myEv = eventsOf(p.id).filter((e) => e.author_id === S.me.id).map((e) => e.created_at);
+  const myFiles = filesOf(p.id).filter((f) => f.uploaded_by === S.me.id).map((f) => f.created_at);
+  return maxTs(mark, S.me.created_at, ...myEv, ...myFiles);
+}
+function noticeItems(p) {
+  if (!can('comment') || p.owner_id === S.me.id) return [];
+  const base = noticeBase(p);
+  const evs = eventsOf(p.id).filter((e) => e.author_id === p.owner_id && ts(e.created_at) > base)
+    .map((e) => ({ type: 'event', kind: e.kind, at: e.created_at, id: e.id }));
+  const fs = filesOf(p.id).filter((f) => f.uploaded_by === p.owner_id && ts(f.created_at) > base)
+    .map((f) => ({ type: 'file', at: f.created_at, id: f.id }));
+  return [...evs, ...fs].sort((a, b) => ts(b.at) - ts(a.at));
+}
+function myNotices() {
+  if (!can('comment')) return [];
+  return S.patents.map((p) => ({ p, items: noticeItems(p) })).filter((n) => n.items.length)
+    .sort((a, b) => ts(b.items[0].at) - ts(a.items[0].at));
+}
+function noticeSummary(items) {
+  const parts = {};
+  for (const it of items) {
+    const label = it.type === 'file' ? '上传文件' : (EVENT_KINDS[it.kind] || EVENT_KINDS.note).label;
+    parts[label] = (parts[label] || 0) + 1;
+  }
+  return Object.entries(parts).map(([k, n]) => (n > 1 ? `${k} ×${n}` : k)).join('、');
+}
+const noticeBadge = (p) => (noticeItems(p).length ? `<span class="badge-notice" title="撰写人有新的提交或文件">新动态</span>` : '');
+function noticeList(list, compact = false) {
+  if (!list.length) return `<div class="empty small">没有待查看的新动态</div>`;
+  return list.map(({ p, items }) => `<div class="nt-item">
+      <a class="nt-main" href="#/patent/${p.id}">
+        <span class="nt-top">${who(profile(p.owner_id))}<span class="nt-title">《${esc(p.title)}》</span></span>
+        <span class="nt-sum"><span class="badge-notice">${items.length} 条新动态</span>${esc(noticeSummary(items))} · ${relTime(items[0].at)}</span>
+      </a>
+      <button class="btn sm ghost" data-action="dismiss" data-id="${p.id}" title="标为已处理，不再提醒">忽略</button>
+    </div>`).join('') + (compact ? '' : '');
+}
 
 const pill = (stage, cls = '') => {
   const s = stageOf(stage);
@@ -117,6 +167,14 @@ async function render() {
       <button class="btn" data-action="logout">退出登录</button></div></div>`;
     return;
   }
+  // 只撰写自己条目的账号，打开网站直接进入自己的页面
+  if (!UI.booted) {
+    UI.booted = true;
+    if ((!location.hash || location.hash === '#') && isWriterOnly()) {
+      location.replace(`#/member/${S.me.id}`);
+      return;
+    }
+  }
   const r = parseRoute();
   let view;
   if (r.name === 'member' && profile(r.id)) view = viewMember(profile(r.id));
@@ -125,19 +183,30 @@ async function render() {
   else if ((r.name === 'admin' || r.name === 'team') && can('manage')) view = viewAdmin(r.id);
   else view = viewHome();
 
-  const active = (name) => r.name === name || (name === 'home' && ['member', 'patent'].includes(r.name)) || (name === 'admin' && r.name === 'team');
+  const mine = r.name === 'member' && r.id === S.me.id;
+  const active = (name) => (name === 'mine' ? mine
+    : r.name === name || (name === 'home' && !mine && ['member', 'patent'].includes(r.name)) || (name === 'admin' && r.name === 'team'));
+  const notices = myNotices();
   const nav = (name, label, href) => `<a href="${href}" class="${active(name) ? 'active' : ''}">${label}</a>`;
 
   root.innerHTML = `
     <header class="topbar"><div class="wrap topbar-in">
       <a class="brand" href="#/"><span class="brand-mark"></span><span class="brand-text">${esc(cfg.APP_NAME)}</span></a>
       <nav class="nav">
+        ${can('own') ? nav('mine', '我的条目', `#/member/${S.me.id}`) : ''}
         ${nav('home', '总览', '#/')}
         ${nav('all', '全部条目', '#/all')}
         ${can('manage') ? nav('admin', '管理', '#/admin') : ''}
       </nav>
       <div class="spacer"></div>
       ${api.mode === 'demo' ? '<span class="demo-badge" title="未配置 Supabase，数据只保存在当前浏览器">演示模式</span>' : ''}
+      ${can('comment') ? `<div class="bell-wrap">
+        <button class="bell ${notices.length ? 'has' : ''}" data-action="bell" title="待查看的新动态">${icon.bell}${notices.length ? `<span class="bell-n">${notices.length}</span>` : ''}</button>
+        <div class="bell-menu" hidden>
+          <div class="bell-head"><b>待查看的新动态</b>${notices.length ? '<button class="link-btn" data-action="dismiss-all">全部忽略</button>' : ''}</div>
+          <div class="bell-list">${noticeList(notices.slice(0, 12))}</div>
+        </div>
+      </div>` : ''}
       <div class="user-menu">
         <button class="user-btn" data-action="menu">${avatar(S.me, 'sm')}<span>${esc(S.me.name)}</span>${icon.down}</button>
         <div class="menu" hidden>
@@ -218,7 +287,6 @@ function viewHome() {
 
   const stats = [
     ['条目总数', ps.length, ''],
-    ['平均撰写进度', avg(ps.map((p) => p.progress)) + '<small>%</small>', ''],
     ['已交专利中心', submitted, ''],
     ['返回修改', toFix, toFix ? 'warn' : ''],
     ['有新意见待处理', pending, pending ? 'warn' : ''],
@@ -233,11 +301,11 @@ function viewHome() {
     ${shown.map((e) => {
       const p = patent(e.patent_id);
       const k = EVENT_KINDS[e.kind];
-      const isNew = String(e.created_at) > String(p.updated_at);
+      const isNew = ts(e.created_at) > ts(p.updated_at);
       return `<a class="cm-row" href="#/patent/${p.id}">
         <span class="cm-date">${fmtShort(e.happened_on)}</span>
         <span class="ev-dot ${k.cls}"></span>
-        <span class="cm-text"><b>${esc(profile(e.author_id)?.name || '已删除成员')}</b> 对 <b>${esc(profile(p.owner_id)?.name || '')}</b>《${esc(p.title)}》${k.verb}${e.content ? '：' : ''}<span class="muted">${esc(e.content)}</span></span>
+        <span class="cm-text">${who(profile(e.author_id))} 对 ${who(profile(p.owner_id))}《${esc(p.title)}》${k.verb}${e.content ? '：' : ''}<span class="muted">${esc(e.content)}</span></span>
         ${isNew ? '<span class="badge-new">未处理</span>' : ''}
       </a>`;
     }).join('') || '<div class="empty small">暂无意见</div>'}
@@ -273,6 +341,12 @@ function viewHome() {
       ${canCreate() ? `<button class="btn primary" data-action="new-patent">${icon.plus}新建条目</button>` : ''}
     </div>
     <div class="stats">${stats}</div>
+    ${can('comment') ? `<section class="card nt-box">
+      <div class="cm-head"><h2 class="sec-title in-card">待查看的新动态 <span class="count ${myNotices().length ? 'hot' : ''}">${myNotices().length}</span></h2>
+        ${myNotices().length ? '<button class="link-btn" data-action="dismiss-all">全部忽略</button>' : ''}</div>
+      <p class="muted small nt-tip">撰写人在你上次处理之后新增的提交、修改和文件。你在该条目里留下意见或上传文件后自动消失，也可以点「忽略」。</p>
+      ${noticeList(myNotices())}
+    </section>` : ''}
     ${commentBox}
     ${feed}
     <h2 class="sec-title">成员</h2>
@@ -307,7 +381,7 @@ function memberCard(m) {
     ${stageBar(list)}
     <ul class="mc-list">
       ${list.map((p, i) => `<li class="${i >= 3 ? 'extra' : ''}"><a href="#/patent/${p.id}">
-        <span class="mc-t">${esc(p.title)}</span><span class="mc-b">${newBadge(newComments(p).length)}</span>
+        <span class="mc-t">${esc(p.title)}</span><span class="mc-b">${newBadge(newComments(p).length)}${noticeBadge(p)}</span>
         ${bar(p.progress, 'thin')}<span class="mc-p">${p.progress}%</span>${pill(p.stage, 'sm')}</a></li>`).join('')}
       ${!list.length ? '<li class="more">暂无条目</li>' : ''}
     </ul>
@@ -343,7 +417,7 @@ function itemRow(p) {
   const nf = filesOf(p.id).length;
   return `<a class="card item-row" href="#/patent/${p.id}">
     <div class="ir-main">
-      <div class="ir-title">${esc(p.title)} ${newBadge(newComments(p).length)}</div>
+      <div class="ir-title">${esc(p.title)} ${newBadge(newComments(p).length)}${noticeBadge(p)}</div>
       <div class="ir-meta"><span class="tag">${esc(p.kind)}</span><span class="muted">更新于 ${relTime(p.updated_at)}</span>
         ${p.due_date ? `<span class="muted">· 截止 ${fmtDate(p.due_date)}</span>` : ''}</div>
       ${fb ? `<div class="ir-fb"><span class="ev-dot ${EVENT_KINDS[fb.kind].cls}"></span><b>${fmtShort(fb.happened_on)} ${esc(profile(fb.author_id)?.name || '')}：</b>${esc(fb.content)}</div>` : ''}
@@ -367,16 +441,18 @@ function viewPatent(p) {
   const sub = firstEvent(p.id, 'submit');
   const fb = evs.find((e) => isReviewComment(e, p));
   const nNew = newComments(p).length;
+  const nItems = noticeItems(p);
+  const nIds = new Set(nItems.map((x) => x.id));
 
   const timeline = evs.map((e) => {
     const k = EVENT_KINDS[e.kind] || EVENT_KINDS.note;
     const fromOther = isReviewComment(e, p);
-    const isNew = fromOther && String(e.created_at) > String(p.updated_at);
-    return `<li class="tl-item ${fromOther ? 'from-other' : ''}">
+    const isNew = fromOther && ts(e.created_at) > ts(p.updated_at);
+    return `<li class="tl-item ${fromOther ? 'from-other' : ''} ${nIds.has(e.id) ? 'is-notice' : ''}">
       <span class="ev-dot ${k.cls}"></span>
       <div class="tl-body">
-        <div class="tl-top"><b>${k.label}</b><span class="muted">${fmtDate(e.happened_on)} · ${esc(profile(e.author_id)?.name || '已删除成员')}</span>
-          ${isNew ? '<span class="badge-new">新</span>' : ''}
+        <div class="tl-top"><b>${k.label}</b>${who(profile(e.author_id))}<span class="muted">${fmtDate(e.happened_on)}</span>
+          ${isNew ? '<span class="badge-new">新</span>' : ''}${nIds.has(e.id) ? '<span class="badge-notice">新动态</span>' : ''}
           ${canDelEvent(e, p) ? `<button class="icon-btn subtle" data-action="del-event" data-id="${e.id}" title="删除">${icon.trash}</button>` : ''}</div>
         ${e.content ? `<div class="tl-content">${esc(e.content)}</div>` : ''}
       </div></li>`;
@@ -391,7 +467,7 @@ function viewPatent(p) {
       <button class="file-pick" data-action="pv-file" data-id="${f.id}" title="预览">
         <span class="file-ic">${icon.file}</span>
         <span class="file-main"><span class="file-name">${esc(f.name)}</span>
-          <span class="muted small">${fmtSize(f.size)} · ${esc(profile(f.uploaded_by)?.name || '')} · ${relTime(f.created_at)}${f.note ? ` · ${esc(f.note)}` : ''}</span></span>
+          <span class="muted small">${nIds.has(f.id) ? '<span class="badge-notice">新</span> ' : ''}${fmtSize(f.size)} · ${esc(profile(f.uploaded_by)?.name || '')} · ${relTime(f.created_at)}${f.note ? ` · ${esc(f.note)}` : ''}</span></span>
       </button>
       <button class="icon-btn" data-action="dl-file" data-id="${f.id}" title="下载">${icon.download}</button>
       ${canDelFile(f, p) ? `<button class="icon-btn subtle" data-action="del-file" data-id="${f.id}" title="删除">${icon.trash}</button>` : ''}
@@ -435,6 +511,8 @@ function viewPatent(p) {
       <div class="ov-cell"><div class="ov-k">最近意见</div><div class="ov-v">${fb ? fmtDate(fb.happened_on) : '—'}</div></div>
       <div class="ov-cell"><div class="ov-k">截止日期</div><div class="ov-v">${p.due_date ? fmtDate(p.due_date) : '—'}</div></div>
     </div>
+    ${nItems.length ? `<div class="notice-bar">${icon.bell}<span>${who(owner)} 在你上次处理之后有 <b>${nItems.length}</b> 条新动态：${esc(noticeSummary(nItems))}。留下意见后会自动标为已处理。</span>
+      <button class="btn sm" data-action="dismiss" data-id="${p.id}">标为已处理</button></div>` : ''}
     ${note}
     ${p.description ? `<div class="card desc"><div class="ov-k">说明</div><div class="desc-text">${esc(p.description)}</div></div>` : ''}
 
@@ -537,7 +615,7 @@ function tableRows() {
     const fb = eventsOf(p.id).find((e) => isReviewComment(e, p));
     return `<tr data-href="#/patent/${p.id}">
       <td class="num muted">${i + 1}</td>
-      <td class="t-title"><span class="tag sm">${esc(p.kind)}</span>${esc(p.title)} ${newBadge(newComments(p).length)}</td>
+      <td class="t-title"><span class="tag sm">${esc(p.kind)}</span>${esc(p.title)} ${newBadge(newComments(p).length)}${noticeBadge(p)}</td>
       <td class="nowrap">${esc(profile(p.owner_id)?.name || '')}</td>
       <td class="t-prog">${bar(p.progress, 'thin')}<span>${p.progress}%</span></td>
       <td>${pill(p.stage)}</td>
@@ -994,7 +1072,13 @@ async function saveRoleField(t) {
 // ======================= 事件绑定 =======================
 const actions = {
   menu(el) { const m = el.nextElementSibling; m.hidden = !m.hidden; },
-  async logout() { await api.signOut(); S.loaded = false; S.me = null; location.hash = '#/'; renderLogin(); },
+  bell(el) { const m = el.nextElementSibling; m.hidden = !m.hidden; },
+  async dismiss(el) { await run(() => api.markSeen([el.dataset.id]), '已忽略'); },
+  async 'dismiss-all'() {
+    const ids = myNotices().map((n) => n.p.id);
+    if (ids.length) await run(() => api.markSeen(ids), `已忽略 ${ids.length} 篇的新动态`);
+  },
+  async logout() { await api.signOut(); S.loaded = false; S.me = null; UI.booted = false; location.hash = '#/'; renderLogin(); },
   'login-tab'(el) {
     UI.loginTab = el.dataset.tab;
     renderLogin();
@@ -1087,6 +1171,7 @@ document.addEventListener('click', (e) => {
   const a = e.target.closest('.overlay [data-action]');
   if (a) { e.preventDefault(); actions[a.dataset.action]?.(a, e); }
   if (!e.target.closest('.user-menu')) root.querySelectorAll('.user-menu .menu').forEach((m) => { m.hidden = true; });
+  if (!e.target.closest('.bell-wrap') || e.target.closest('.nt-main')) root.querySelectorAll('.bell-menu').forEach((m) => { m.hidden = true; });
 });
 
 root.addEventListener('input', (e) => {
@@ -1149,6 +1234,9 @@ root.addEventListener('submit', async (e) => {
     try {
       await api.signIn(fd.get('login'), fd.get('password'));
       S.loaded = false;
+      await reload();
+      location.hash = isWriterOnly() ? `#/member/${S.me.id}` : '#/';
+      UI.booted = true;
       await render();
     } catch (err) { handleErr(err); busy(btn, false); }
   }
@@ -1161,7 +1249,9 @@ root.addEventListener('submit', async (e) => {
         password: fd.get('password'), code: fd.get('code') || '' });
       UI.loginTab = 'login';
       S.loaded = false;
-      location.hash = '#/';
+      await reload();
+      location.hash = isWriterOnly() ? `#/member/${S.me.id}` : '#/';
+      UI.booted = true;
       await render();
       toast('注册成功，欢迎！', 'ok');
     } catch (err) { handleErr(err); busy(btn, false); }

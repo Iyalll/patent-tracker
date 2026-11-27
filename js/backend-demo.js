@@ -1,8 +1,8 @@
 // 演示后端：所有数据存在当前浏览器 localStorage，用于本地预览界面与权限逻辑
 // config.js 里填好 SUPABASE_URL / SUPABASE_KEY 后会自动切换到真实后端
 
-const DB_KEY = 'pt_demo_db_v2';
-const SES_KEY = 'pt_demo_session_v2';
+const DB_KEY = 'pt_demo_db_v3';
+const SES_KEY = 'pt_demo_session_v3';
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).slice(2) + Date.now().toString(36));
 const now = () => new Date().toISOString();
@@ -28,6 +28,7 @@ function seed() {
     P(u1, '张三', 'zhangsan', 'admin', 1), P(u2, '李四', 'lisi', 'student', 2),
     P(u3, '王五', 'wangwu', 'student', 3), P(u4, '陈老师', 'chen', 'teacher', 9, false),
   ];
+  profiles[3].created_at = daysAgo(20);
   const accounts = [
     { username: 'zhangsan', password: '123456', userId: u1 }, { username: 'lisi', password: '123456', userId: u2 },
     { username: 'wangwu', password: '123456', userId: u3 }, { username: 'chen', password: '123456', userId: u4 },
@@ -65,9 +66,12 @@ function seed() {
     E(patents[6], 'submit', '软著申请材料（源代码 + 说明书）提交', 12, u2),
     E(patents[6], 'feedback', '形式审查通过，已提交受理。', 6, u4),
     E(patents[7], 'submit', '说明书 + 权利要求书提交', 14, u3),
-    E(patents[7], 'feedback', '技术交底检索：权利要求 2–4 与对比文件 D1 重合度较高，需要修改后重新提交。', 0, u4),
+    E(patents[7], 'feedback', '技术交底检索：权利要求 2–4 与对比文件 D1 重合度较高，需要修改后重新提交。', 3, u4),
+    E(patents[7], 'revise', '已按意见修改权利要求 2–4，说明书 v4 已上传，请再看一下。', 1, u3),
+    E(patents[1], 'submit', '交底书初稿提交，请老师先看一下整体思路。', 0, u1),
   ];
-  return { roles: DEFAULT_ROLES, profiles, accounts, roster, settings: [{ key: 'register_code', value: '' }], patents, events, files: [] };
+  patents[7].updated_at = daysAgo(1);
+  return { roles: DEFAULT_ROLES, profiles, accounts, roster, settings: [{ key: 'register_code', value: '' }], patents, events, files: [], marks: [] };
 }
 
 function load() {
@@ -193,6 +197,7 @@ export function createDemoBackend() {
         files: db.files.map(({ data, ...f }) => ({ ...f, _hasData: !!data })),
         roster: mgr ? db.roster : [],
         settings: mgr ? db.settings : [],
+        marks: (db.marks || []).filter((m) => m.user_id === session?.userId),
       }));
     },
 
@@ -224,6 +229,15 @@ export function createDemoBackend() {
       db.roster.forEach((r) => { if (r.user_id === id) r.user_id = null; });
       db.profiles = db.profiles.filter((p) => p.id !== id);
       db.accounts = db.accounts.filter((a) => a.userId !== id);
+      persist(); return delay();
+    },
+
+    async markSeen(patentIds) {
+      db.marks = db.marks || [];
+      for (const pid of patentIds) {
+        const m = db.marks.find((x) => x.user_id === session.userId && x.patent_id === pid);
+        if (m) m.seen_at = now(); else db.marks.push({ user_id: session.userId, patent_id: pid, seen_at: now() });
+      }
       persist(); return delay();
     },
 

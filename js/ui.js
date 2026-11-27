@@ -60,6 +60,7 @@ export const icon = {
   send: svg('<path d="M4 12h14M13 6l6 6-6 6"/>'),
   search: svg('<circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/>'),
   x: svg('<path d="M6 6l12 12M18 6 6 18"/>'),
+  bell: svg('<path d="M6 8a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10.3 20a2 2 0 0 0 3.4 0"/>'),
   expand: svg('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>'),
 };
 

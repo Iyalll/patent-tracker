@@ -124,7 +124,7 @@ input[type=checkbox] { width: auto; accent-color: var(--accent); }
 .count { font-size: 12px; color: var(--muted); background: var(--line-2); border-radius: 99px; padding: 0 7px; font-weight: 500; }
 
 /* ---------- stats ---------- */
-.stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 28px; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 28px; }
 .stat { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; }
 .stat-v { font-size: 26px; font-weight: 600; letter-spacing: -.02em; line-height: 1.2; }
 .stat-v small { font-size: 14px; color: var(--muted); margin-left: 1px; }
@@ -471,3 +471,40 @@ input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 
   .tabs { overflow-x: auto; }
   .tabs a { white-space: nowrap; }
 }
+
+/* ---------- 彩色姓名标签 ---------- */
+.who { --c: #3d6b5c; display: inline-block; font-size: 12px; font-weight: 600; line-height: 19px; padding: 0 7px; border-radius: 5px;
+  color: var(--c); background: color-mix(in srgb, var(--c) 13%, white); white-space: nowrap; vertical-align: 1px; }
+.tl-top .who { margin: 0 2px; }
+.cm-text .who { margin: 0 1px; }
+
+/* ---------- 审核人通知 ---------- */
+.badge-notice { display: inline-block; font-size: 11px; font-weight: 600; color: #fff; background: #1c7ed6; border-radius: 5px; padding: 0 6px; line-height: 18px; white-space: nowrap; vertical-align: 1px; margin-left: 4px; }
+.bell-wrap { position: relative; }
+.bell { position: relative; display: grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
+.bell:hover { background: var(--line-2); color: var(--text); }
+.bell.has { color: #1c7ed6; }
+.bell svg { width: 18px; height: 18px; }
+.bell-n { position: absolute; top: 2px; right: 1px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 99px; background: #e03131; color: #fff; font-size: 10.5px; font-weight: 700; line-height: 16px; text-align: center; }
+.bell-menu { position: absolute; right: -60px; top: calc(100% + 8px); width: 400px; max-width: 92vw; background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 32px rgba(0, 0, 0, .12); z-index: 30; }
+.bell-menu[hidden] { display: none; }
+.bell-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--line-2); }
+.bell-head .link-btn { padding: 0; }
+.bell-list { max-height: 60vh; overflow: auto; padding: 6px; }
+.nt-item { display: flex; align-items: center; gap: 6px; border-radius: 8px; }
+.nt-item:hover { background: #f6f8fb; }
+.nt-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; padding: 8px 8px; }
+.nt-top { display: flex; align-items: center; gap: 4px; min-width: 0; font-size: 13.5px; }
+.nt-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nt-sum { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nt-sum .badge-notice { margin: 0 6px 0 0; }
+.nt-box { padding: 14px 18px; margin-bottom: 14px; border-color: #cfe2f7; background: linear-gradient(#f7fbff, #fff 60px); }
+.nt-box .nt-item { margin: 0 -8px; }
+.nt-tip { margin: -2px 0 6px; }
+.count.hot { background: #1c7ed6; color: #fff; }
+.notice-bar { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #1864ab; background: #e7f5ff; border: 1px solid #c5e1fa; border-radius: 9px; padding: 8px 10px 8px 14px; margin-bottom: 14px; }
+.notice-bar > svg { color: #1c7ed6; }
+.notice-bar > span { flex: 1; }
+.tl-item.is-notice .tl-body { background: #f3f9ff; border: 1px solid #d0e6fb; border-radius: 8px; padding: 6px 10px; margin-top: -4px; }
+@media (max-width: 1000px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 640px) { .bell-menu { position: fixed; left: 4vw; right: 4vw; top: 60px; width: auto; } .notice-bar { flex-wrap: wrap; } }

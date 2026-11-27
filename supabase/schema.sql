@@ -253,6 +253,14 @@ create table if not exists public.files (
 );
 create index if not exists files_patent_idx on public.files(patent_id);
 
+-- ---------- 7b. 通知已读标记（审核人「忽略」某条目的新动态；每人一份） ----------
+create table if not exists public.notice_marks (
+  user_id   uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  patent_id uuid not null references public.patents(id) on delete cascade,
+  seen_at   timestamptz not null default now(),
+  primary key (user_id, patent_id)
+);
+
 -- ---------- 8. 权限（RLS） ----------
 -- 能否修改某个条目：有「修改所有条目」权限，或「可撰写」且是撰写人本人
 create or replace function public.can_write_patent(pid uuid)
@@ -276,13 +284,13 @@ as $$
 $$;
 
 revoke all on public.roles, public.profiles, public.roster, public.app_settings,
-              public.patents, public.events, public.files from anon;
+              public.patents, public.events, public.files, public.notice_marks from anon;
 grant select, insert, update, delete on public.roles, public.profiles, public.roster, public.app_settings,
-              public.patents, public.events, public.files to authenticated;
+              public.patents, public.events, public.files, public.notice_marks to authenticated;
 -- 账号服务（Edge Function）用 service_role 访问这些表；新版 Supabase 不再默认授权，需显式授予
 grant usage on schema public to service_role;
 grant select, insert, update, delete on public.roles, public.profiles, public.roster, public.app_settings,
-              public.patents, public.events, public.files to service_role;
+              public.patents, public.events, public.files, public.notice_marks to service_role;
 
 alter table public.roles        enable row level security;
 alter table public.profiles     enable row level security;
@@ -291,6 +299,7 @@ alter table public.app_settings enable row level security;
 alter table public.patents      enable row level security;
 alter table public.events       enable row level security;
 alter table public.files        enable row level security;
+alter table public.notice_marks enable row level security;
 
 -- roles：所有人可读（界面需要），管理者可改
 drop policy if exists roles_select on public.roles;
@@ -357,6 +366,23 @@ drop policy if exists files_delete on public.files;
 create policy files_delete on public.files for delete to authenticated
   using (public.perm('edit_all') or (uploaded_by = auth.uid()
     and (public.can_write_patent(patent_id) or public.perm('comment'))));
+
+-- notice_marks：每人只能读写自己的
+drop policy if exists notice_marks_own on public.notice_marks;
+create policy notice_marks_own on public.notice_marks for all to authenticated
+  using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- 把若干条目标记为「已查看」（用服务器时间，避免各人电脑时钟不准）
+create or replace function public.mark_seen(pids uuid[])
+returns void
+language sql security invoker set search_path = public
+as $$
+  insert into public.notice_marks (user_id, patent_id, seen_at)
+  select auth.uid(), pid, now() from unnest(pids) as pid
+  on conflict (user_id, patent_id) do update set seen_at = excluded.seen_at;
+$$;
+revoke execute on function public.mark_seen(uuid[]) from public, anon;
+grant execute on function public.mark_seen(uuid[]) to authenticated;
 
 -- ---------- 9. 文件存储桶（私有，登录后生成 10 分钟临时链接下载 / 预览） ----------
 insert into storage.buckets (id, name, public, file_size_limit)

@@ -186,7 +186,7 @@ export function createSupabaseBackend(cfg) {
     },
 
     async loadAll() {
-      const [roles, profiles, patents, events, files, roster, settings] = await Promise.all([
+      const [roles, profiles, patents, events, files, roster, settings, marks] = await Promise.all([
         rest('roles?select=*&order=sort_order.asc,created_at.asc'),
         rest('profiles?select=*&order=sort_order.asc,created_at.asc'),
         rest('patents?select=*&order=created_at.asc'),
@@ -194,8 +194,14 @@ export function createSupabaseBackend(cfg) {
         rest('files?select=*&order=created_at.desc'),
         rest('roster?select=*&order=created_at.asc'),        // 非管理员读到的是空列表
         rest('app_settings?select=*'),
+        rest('notice_marks?select=patent_id,seen_at').catch(() => []),   // 旧数据库未升级时不影响使用
       ]);
-      return { roles, profiles, patents, events, files, roster, settings };
+      return { roles, profiles, patents, events, files, roster, settings, marks };
+    },
+
+    // 审核人把条目的新动态标为已查看（忽略）
+    async markSeen(patentIds) {
+      await rest('rpc/mark_seen', { method: 'POST', body: JSON.stringify({ pids: patentIds }) });
     },
 
     // ---- 名单 ----
