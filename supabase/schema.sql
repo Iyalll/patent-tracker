@@ -279,6 +279,10 @@ revoke all on public.roles, public.profiles, public.roster, public.app_settings,
               public.patents, public.events, public.files from anon;
 grant select, insert, update, delete on public.roles, public.profiles, public.roster, public.app_settings,
               public.patents, public.events, public.files to authenticated;
+-- 账号服务（Edge Function）用 service_role 访问这些表；新版 Supabase 不再默认授权，需显式授予
+grant usage on schema public to service_role;
+grant select, insert, update, delete on public.roles, public.profiles, public.roster, public.app_settings,
+              public.patents, public.events, public.files to service_role;
 
 alter table public.roles        enable row level security;
 alter table public.profiles     enable row level security;
