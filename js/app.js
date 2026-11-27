@@ -364,8 +364,8 @@ function stageBar(list) {
 }
 
 function memberCard(m) {
-  const list = patentsOf(m.id).slice().sort((a, b) =>
-    newComments(b).length - newComments(a).length || String(b.updated_at).localeCompare(String(a.updated_at)));
+  // 与个人页一致：按新建顺序
+  const list = patentsOf(m.id).slice().sort((a, b) => ts(a.created_at) - ts(b.created_at));
   const done = list.filter((p) => p.progress >= 100).length;
   const nNew = list.filter((p) => newComments(p).length).length;
   const open = UI.expanded.has(m.id);
