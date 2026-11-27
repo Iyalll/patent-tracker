@@ -34,7 +34,13 @@ export function avatarColor(id = '') {
   for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
   return PALETTE[h % PALETTE.length];
 }
-const initials = (name = '?') => (/[\u4e00-\u9fa5]/.test(name) && name.length >= 2 ? name.slice(-2) : name.slice(0, 1).toUpperCase());
+const initials = (name = '?') => {
+  if (!/[\u4e00-\u9fa5]/.test(name)) return name.slice(0, 1).toUpperCase();
+  const suf = /(老师|教授|博士|同学|主任|（.*?）|\(.*?\))$/;
+  const core = name.replace(suf, '').replace(suf, '') || name;
+  if (core === name) return name.slice(-2);          // 普通姓名：取后两个字
+  return core.length <= 2 ? core : core.slice(0, 1);  // 「陈老师」→ 陈，「欧阳老师」→ 欧阳
+};
 export const avatar = (p, size = '') =>
   `<span class="avatar ${size}" style="--c:${avatarColor(p?.id)}">${esc(initials(p?.name))}</span>`;
 
@@ -54,6 +60,7 @@ export const icon = {
   send: svg('<path d="M4 12h14M13 6l6 6-6 6"/>'),
   search: svg('<circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/>'),
   x: svg('<path d="M6 6l12 12M18 6 6 18"/>'),
+  expand: svg('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>'),
 };
 
 // ---------- toast ----------
@@ -73,11 +80,11 @@ export function toast(msg, type = 'info') {
 }
 
 // ---------- modal ----------
-export function openModal({ title, body, wide = false, onMount, onClose }) {
+export function openModal({ title, body, wide = false, cls = '', onMount, onClose }) {
   const ov = document.createElement('div');
   ov.className = 'overlay';
   ov.innerHTML = `
-    <div class="modal ${wide ? 'wide' : ''}" role="dialog" aria-modal="true">
+    <div class="modal ${wide ? 'wide' : ''} ${cls}" role="dialog" aria-modal="true">
       <div class="modal-head"><h3>${esc(title)}</h3><button class="icon-btn" data-close aria-label="关闭">${icon.x}</button></div>
       <div class="modal-body">${body}</div>
     </div>`;

@@ -24,12 +24,12 @@ window.APP_CONFIG = {
 
   // 阶段：顺序即流程顺序，颜色用于标签
   STAGES: [
-    { name: '撰写中',         color: '#b4234a', bg: '#fdecef' },
-    { name: '导师审核',       color: '#6d3fc0', bg: '#f1ecfb' },
-    { name: '交专利中心审核', color: '#a15c07', bg: '#fdf3e1' },
-    { name: '返回修改',       color: '#c2410c', bg: '#fdeee6' },
-    { name: '已提交受理',     color: '#1d5fb8', bg: '#e8f0fc' },
-    { name: '已授权/登记',    color: '#1f7a52', bg: '#e5f4ec' },
-    { name: '暂停',           color: '#5f6670', bg: '#eff0f2' },
+    { name: '撰写中',         color: '#f08c00', bg: '#fff4e6' },   // 橙
+    { name: '导师审核',       color: '#7048e8', bg: '#f3f0ff' },   // 紫
+    { name: '交专利中心审核', color: '#212529', bg: '#e9ecef' },   // 黑
+    { name: '返回修改',       color: '#e03131', bg: '#fff5f5' },   // 红
+    { name: '已提交受理',     color: '#1c7ed6', bg: '#e7f5ff' },   // 蓝
+    { name: '已授权/登记',    color: '#2f9e44', bg: '#ebfbee' },   // 绿
+    { name: '暂停',           color: '#adb5bd', bg: '#f1f3f5' },   // 灰
   ],
 };

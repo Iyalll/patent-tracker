@@ -126,6 +126,27 @@ export function createSupabaseBackend(cfg) {
     });
   }
 
+  // Edge Function「account」：注册 / 管理员建号 / 重置密码 / 姓名登录
+  async function fn(action, body = {}, withAuth = false) {
+    const headers = { apikey: KEY, 'Content-Type': 'application/json' };
+    if (withAuth) headers.Authorization = 'Bearer ' + (await token());
+    let r;
+    try {
+      r = await fetch(`${base}/functions/v1/account`, { method: 'POST', headers, body: JSON.stringify({ action, ...body }) });
+    } catch {
+      throw new Error('无法连接账号服务（Edge Function account），请检查网络或联系管理员部署');
+    }
+    const d = await parse(r);
+    if (!r.ok) {
+      if (r.status === 404 && !(d && d.error)) throw new Error('账号服务尚未部署（Supabase Edge Function「account」），请联系管理员');
+      if (r.status === 401 && !(d && d.error)) throw new Error('账号服务开启了 JWT 校验，请管理员在函数设置里关闭 Verify JWT');
+      throw new Error((d && (d.error || d.msg || d.message)) || `账号服务出错（${r.status}）`);
+    }
+    return d;
+  }
+
+  const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{1,31}$/i;
+
   return {
     mode: 'cloud',
 
@@ -134,7 +155,11 @@ export function createSupabaseBackend(cfg) {
     },
 
     async signIn(login, password) {
-      const email = login.includes('@') ? login.trim() : `${login.trim()}@${cfg.EMAIL_DOMAIN}`;
+      login = login.trim();
+      if (!login.includes('@') && !USERNAME_RE.test(login)) {
+        login = (await fn('resolve', { login })).username;   // 中文姓名 / 别名 → 用户名
+      }
+      const email = login.includes('@') ? login : `${login.toLowerCase()}@${cfg.EMAIL_DOMAIN}`;
       const d = await auth('/token?grant_type=password', { body: { email, password } });
       save(toSession(d));
     },
@@ -145,18 +170,61 @@ export function createSupabaseBackend(cfg) {
       save(null);
     },
 
+    registrationInfo() { return fn('info'); },
+    checkName(name) { return fn('check', { name }); },
+
+    async register({ name, username, password, code }) {
+      const d = await fn('register', { name, username, password, code });
+      await this.signIn(d.username, password);
+    },
+
+    adminCreateAccount(data) { return fn('create', data, true); },
+    adminResetPassword(userId, password) { return fn('reset', { user_id: userId, password }, true); },
+
     async changePassword(password) {
       await auth('/user', { method: 'PUT', token: await token(), body: { password } });
     },
 
     async loadAll() {
-      const [profiles, patents, events, files] = await Promise.all([
+      const [roles, profiles, patents, events, files, roster, settings] = await Promise.all([
+        rest('roles?select=*&order=sort_order.asc,created_at.asc'),
         rest('profiles?select=*&order=sort_order.asc,created_at.asc'),
         rest('patents?select=*&order=created_at.asc'),
         rest('events?select=*&order=happened_on.desc,created_at.desc'),
         rest('files?select=*&order=created_at.desc'),
+        rest('roster?select=*&order=created_at.asc'),        // 非管理员读到的是空列表
+        rest('app_settings?select=*'),
       ]);
-      return { profiles, patents, events, files };
+      return { roles, profiles, patents, events, files, roster, settings };
+    },
+
+    // ---- 名单 ----
+    async addRoster(row) {
+      return one(await rest('roster', { method: 'POST', body: JSON.stringify(row) }), '添加名单');
+    },
+    async updateRoster(id, patch) {
+      return one(await rest(`roster?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify(patch) }), '修改名单');
+    },
+    async deleteRoster(id) {
+      one(await rest(`roster?id=eq.${id}`, { method: 'DELETE' }), '删除名单');
+    },
+
+    // ---- 角色 ----
+    async addRole(row) {
+      return one(await rest('roles', { method: 'POST', body: JSON.stringify(row) }), '新建角色');
+    },
+    async updateRole(key, patch) {
+      return one(await rest(`roles?key=eq.${encodeURIComponent(key)}`, { method: 'PATCH', body: JSON.stringify(patch) }), '修改角色');
+    },
+    async deleteRole(key) {
+      one(await rest(`roles?key=eq.${encodeURIComponent(key)}`, { method: 'DELETE' }), '删除角色');
+    },
+
+    // ---- 设置 ----
+    async setSetting(key, value) {
+      return one(await rest(`app_settings?key=eq.${key}`, {
+        method: 'PATCH', body: JSON.stringify({ value, updated_at: new Date().toISOString() }),
+      }), '修改设置');
     },
 
     async updateProfile(id, patch) {
@@ -224,6 +292,16 @@ export function createSupabaseBackend(cfg) {
       let url = signed.startsWith('http') ? signed : `${base}/storage/v1${signed}`;
       if (download) url += (url.includes('?') ? '&' : '?') + 'download=' + encodeURIComponent(f.name);
       return url;
+    },
+
+    // 预览用：直接以登录身份下载文件内容
+    async fileBlob(f) {
+      const t = await token();
+      const r = await fetch(`${base}/storage/v1/object/authenticated/${BUCKET}/${encPath(f.storage_path)}`, {
+        headers: { apikey: KEY, Authorization: 'Bearer ' + t },
+      });
+      if (!r.ok) throw new Error(`文件读取失败（${r.status}）`);
+      return r.blob();
     },
 
     async deleteFile(f) {
